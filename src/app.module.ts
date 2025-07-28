@@ -20,8 +20,15 @@ import { AiModule } from './ai/ai.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      cache: true,
     }),
-    MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb://localhost:27017/rightmycv'),
+    MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb://localhost:27017/rightmycv', {
+      maxPoolSize: 10,
+      minPoolSize: 1,
+      maxIdleTimeMS: 30000,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    }),
     ThrottlerModule.forRoot([
       {
         ttl: 60000,
@@ -32,6 +39,8 @@ import { AiModule } from './ai/ai.module';
       redis: {
         host: process.env.REDIS_HOST || 'localhost',
         port: parseInt(process.env.REDIS_PORT || '6379'),
+        maxRetriesPerRequest: 3,
+        enableReadyCheck: false,
       },
     }),
     ScheduleModule.forRoot(),

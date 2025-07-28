@@ -16,20 +16,31 @@ import { UsersService } from '../users/users.service';
 import { SubscriptionPlansService } from '../subscriptions/subscription-plans.service';
 import { SubscriptionsService } from '../subscriptions/subscriptions.service';
 
-// Simple in-memory cache for verification results
+// Optimized in-memory cache for verification results with size limit
 const verificationCache = new Map<string, { success: boolean; data: any; timestamp: number }>();
+const MAX_CACHE_SIZE = 1000; // Limit cache size to prevent memory leaks
 
-// Cleanup cache every 10 minutes
+// Cleanup cache every 5 minutes and when size exceeds limit
 setInterval(() => {
   const now = Date.now();
   const fiveMinutes = 5 * 60 * 1000;
   
+  // Remove expired entries
   for (const [key, value] of verificationCache.entries()) {
     if (now - value.timestamp > fiveMinutes) {
       verificationCache.delete(key);
     }
   }
-}, 10 * 60 * 1000); // Run every 10 minutes
+  
+  // If cache is still too large, remove oldest entries
+  if (verificationCache.size > MAX_CACHE_SIZE) {
+    const entries = Array.from(verificationCache.entries());
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+    
+    const toRemove = entries.slice(0, Math.floor(MAX_CACHE_SIZE * 0.2)); // Remove 20% of oldest entries
+    toRemove.forEach(([key]) => verificationCache.delete(key));
+  }
+}, 5 * 60 * 1000);
 
 @ApiTags('payments')
 @Controller('payments')
@@ -42,61 +53,38 @@ export class PaymentsController {
   ) {}
 
   @Post('initialize')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Initialize Paystack payment' })
+  @ApiOperation({ summary: 'Initialize a payment transaction' })
   @ApiResponse({ status: 201, description: 'Payment initialized successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid request or Paystack not configured' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
   async initializePayment(@Body() initializePaymentDto: InitializePaymentDto) {
-    try {
-      // Validate that the plan exists
-      const plan = await this.subscriptionPlansService.findOne(initializePaymentDto.planId);
-      if (!plan) {
-        throw new BadRequestException('Invalid plan ID');
-      }
+    // Set default callback URL if not provided
+    const callbackUrl = initializePaymentDto.callbackUrl || 
+      `${process.env.FRONTEND_URL || 'http://localhost:8080'}/subscription-success`;
 
-      // Set default callback URL if not provided
-      const callbackUrl = initializePaymentDto.callbackUrl || 
-        `${process.env.FRONTEND_URL || 'http://localhost:8080'}/subscription-success`;
-
-      const result = await this.paystackService.initializeTransaction({
-        planId: initializePaymentDto.planId,
-        planName: initializePaymentDto.planName,
-        email: initializePaymentDto.email,
-        amount: initializePaymentDto.amount,
-        currency: initializePaymentDto.currency,
-        callbackUrl,
-      });
-
-      return {
-        success: true,
-        data: result,
-        message: 'Payment initialized successfully',
-      };
-    } catch (error) {
-      console.error('Payment initialization error:', error);
-      throw error;
-    }
+    return this.paystackService.initializeTransaction({
+      ...initializePaymentDto,
+      callbackUrl,
+    });
   }
 
   @Get('verify/:reference')
-  @ApiOperation({ summary: 'Verify Paystack payment' })
+  @ApiOperation({ summary: 'Verify a payment transaction' })
   @ApiResponse({ status: 200, description: 'Payment verified successfully' })
-  @ApiResponse({ status: 400, description: 'Invalid reference or verification failed' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
   async verifyPayment(@Param('reference') reference: string) {
-    try {
-      // Check cache first (cache for 5 minutes)
-      const cached = verificationCache.get(reference);
-      const now = Date.now();
-      if (cached && (now - cached.timestamp) < 5 * 60 * 1000) {
-        console.log(`Returning cached verification result for ${reference}`);
-        return {
-          success: cached.success,
-          data: cached.data,
-          message: cached.success ? 'Payment verified and subscription updated successfully' : 'Payment verification failed',
-        };
-      }
+    const now = Date.now();
+    
+    // Check cache first
+    const cachedResult = verificationCache.get(reference);
+    if (cachedResult && (now - cachedResult.timestamp) < 5 * 60 * 1000) {
+      return {
+        success: cachedResult.success,
+        data: cachedResult.data,
+        cached: true,
+      };
+    }
 
+    try {
       const verification = await this.paystackService.verifyTransaction(reference);
       
       if (verification.status && verification.data.status === 'success') {
@@ -147,10 +135,9 @@ export class PaymentsController {
         return {
           success: true,
           data: verification.data,
-          message: 'Payment verified and subscription updated successfully',
         };
       } else {
-        // Cache the failed result
+        // Cache failed results too (for shorter time)
         verificationCache.set(reference, {
           success: false,
           data: verification.data,
@@ -160,12 +147,11 @@ export class PaymentsController {
         return {
           success: false,
           data: verification.data,
-          message: 'Payment verification failed',
         };
       }
     } catch (error) {
       console.error('Payment verification error:', error);
-      throw error;
+      throw new BadRequestException('Failed to verify payment');
     }
   }
 

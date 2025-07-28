@@ -80,6 +80,7 @@ export class PaystackService {
             'Authorization': `Bearer ${this.secretKey}`,
             'Content-Type': 'application/json',
           },
+          timeout: 10000, // 10 second timeout
         }
       );
 
@@ -108,7 +109,9 @@ export class PaystackService {
         {
           headers: {
             'Authorization': `Bearer ${this.secretKey}`,
+            'Content-Type': 'application/json',
           },
+          timeout: 10000, // 10 second timeout
         }
       );
 
@@ -127,7 +130,7 @@ export class PaystackService {
       return verification.data.status;
     } catch (error) {
       console.error('Error getting transaction status:', error);
-      return 'failed';
+      return 'unknown';
     }
   }
 
