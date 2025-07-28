@@ -12,7 +12,7 @@ async function bootstrap() {
 
   // Enable CORS
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:8080',
+    origin: process.env.FRONTEND_URL || 'https://right-my-p65d70fk5-careerbuddy.vercel.app',
     credentials: true,
   });
 
